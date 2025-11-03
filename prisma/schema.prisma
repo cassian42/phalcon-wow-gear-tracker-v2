@@ -1,0 +1,26 @@
+// ──────────────────────────────────────────────────────────────
+// Prisma Schema — Phalcon Gear Tracker v2
+// ──────────────────────────────────────────────────────────────
+// This schema defines a minimal and privacy-safe data model
+// for anonymous system telemetry (query logging only).
+// It purposely avoids storing any player-identifiable information.
+// ──────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model QueryLog {
+  id          Int      @id @default(autoincrement())
+  uuid        String   @default(uuid())           // Anonymous unique identifier
+  region      String                             // Query region (e.g., "us", "eu")
+  realm       String                             // Query realm name (non-identifiable)
+  action      String                             // Action type: fetch_character, compare, etc.
+  durationMs  Int?                               // Operation duration for performance metrics
+  createdAt   DateTime @default(now())           // Timestamp of the query
+}
