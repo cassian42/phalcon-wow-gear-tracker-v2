@@ -1,81 +1,153 @@
 /**
- * Maxroll Service
+ * Maxroll Service (refactored)
  * ------------------------------------------------------------
- * Fetches Best-in-Slot (BiS) data for a given class/spec
- * from Maxroll.gg or local fallback JSON.
- * Normalizes the data to match Blizzard slot naming conventions.
- * ------------------------------------------------------------
+ * Fetches, extracts, and parses gear recommendations from Maxroll.
+ * Uses slotMapper to align slot names with Blizzard's canonical naming.
+ *
+ * SRP: Fetch + parse Maxroll data only.
+ * LSP: Pure, testable mappers with no controller logic.
+ * DIP: Depends on slotMapper abstraction, not hardcoded mapping.
  */
 
 import axios from "axios";
-import fs from "fs/promises";
-import path from "path";
+import cache from "../utils/cache.js";
+import { normalizeSlotName } from "../mappers/slotMapper.js";
 
-/**
- * Standard slot mapping to Blizzard's terminology
- */
-const SLOT_MAP = {
-    Head: "Head",
-    Neck: "Neck",
-    Shoulders: "Shoulder",
-    Back: "Back",
-    Chest: "Chest",
-    Wrist: "Wrist",
-    Hands: "Hands",
-    Waist: "Waist",
-    Legs: "Legs",
-    Feet: "Feet",
-    Finger1: "Finger1",
-    Finger2: "Finger2",
-    Trinket1: "Trinket1",
-    Trinket2: "Trinket2",
-    MainHand: "MainHand",
-    OffHand: "OffHand"
-};
+export async function getMaxrollGear({
+                                         className,
+                                         specName,
+                                         context = "raid",
+                                     }) {
+    validateInputs(className, specName, context);
+    const guideUrl = buildMaxrollGuideUrl({ className, specName, context });
 
-/**
- * Attempts to fetch BiS data from local or remote source (Maxroll)
- * @param {string} className - Character class (e.g., "Warrior")
- * @param {string} spec - Specialization (e.g., "Fury")
- * @returns {Promise<Object[]>} Normalized BiS data
- */
-export async function getMaxrollBisData(className, spec) {
-    try {
-        const localPath = path.resolve(`./data/bis/${className.toLowerCase()}_${spec.toLowerCase()}.json`);
-        const localExists = await fs.access(localPath).then(() => true).catch(() => false);
+    const cacheKey = `maxroll:gear:${guideUrl}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
 
-        let bisData = [];
+    const html = await fetchHtml(guideUrl);
+    const section = extractGearSection(html);
 
-        if (localExists) {
-            const data = await fs.readFile(localPath, "utf-8");
-            bisData = JSON.parse(data);
-            console.log(`[MaxrollService] Loaded local BiS for ${className} (${spec})`);
-        } else {
-            const url = `https://maxroll.gg/wow/tools/bis/${className.toLowerCase()}`;
-            const { data: html } = await axios.get(url);
-            const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.+?)<\/script>/);
-
-            if (!match) throw new Error("BiS data not found in Maxroll HTML");
-            const json = JSON.parse(match[1]);
-            bisData = json?.props?.pageProps?.items || [];
-            console.log(`[MaxrollService] Fetched remote BiS for ${className} (${spec})`);
-        }
-
-        // Normalize and map to Blizzard slots
-        const normalized = bisData
-            .filter(item => item.slot && item.name)
-            .map(item => ({
-                slot: SLOT_MAP[item.slot] || item.slot,
-                itemName: item.name,
-                itemId: item.id || null,
-                iLvl: item.iLvl || null,
-                quality: item.quality || null,
-                source: "Maxroll.gg"
-            }));
-
-        return normalized;
-    } catch (err) {
-        console.error(`[MaxrollService] Error fetching BiS: ${err.message}`);
-        throw err;
+    if (!section) {
+        const result = {
+            guideUrl,
+            context,
+            generatedAt: new Date().toISOString(),
+            rows: [],
+            note: "Gear section not found on Maxroll.",
+        };
+        cache.set(cacheKey, result, 300);
+        return result;
     }
+
+    const rows = parseGearTable(section);
+
+    const payload = {
+        guideUrl,
+        context,
+        generatedAt: new Date().toISOString(),
+        rows,
+    };
+    cache.set(cacheKey, payload, 600);
+    return payload;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                          Internal Helpers (Private)                        */
+/* -------------------------------------------------------------------------- */
+
+function validateInputs(className, specName, context) {
+    if (!className || !specName)
+        throw new Error("[MaxrollService] Missing class/spec names.");
+    if (!["raid", "mythic-plus"].includes(context))
+        throw new Error("[MaxrollService] Invalid context type.");
+}
+
+function slugify(s) {
+    return String(s || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/(^-|-$)/g, "");
+}
+
+function buildMaxrollGuideUrl({ className, specName, context }) {
+    const base = "https://maxroll.gg/wow/class-guides";
+    return `${base}/${slugify(specName)}-${slugify(className)}-${slugify(
+        context
+    )}-guide#gear-header`;
+}
+
+async function fetchHtml(url) {
+    const { data } = await axios.get(url, {
+        headers: {
+            "User-Agent":
+                "PhalconGearTracker/2.0 (+https://github.com/phalcon-dev)",
+        },
+        timeout: 15000,
+    });
+    return String(data || "");
+}
+
+function extractGearSection(html) {
+    const regex =
+        /<h2[^>]*id=["']gear-header["'][^>]*>[\s\S]*?<\/h2>([\s\S]*?)(?=<h2\b|$)/i;
+    const match = html.match(regex);
+    return match ? match[1] : null;
+}
+
+function parseGearTable(sectionHtml) {
+    const table = sectionHtml.match(/<table[^>]*>([\s\S]*?)<\/table>/i);
+    if (!table) return [];
+
+    const rows = [...table[1].matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+    return rows
+        .map((r) => r[1])
+        .map(parseRow)
+        .filter(Boolean)
+        .filter((r) => r.slot && r.itemName);
+}
+
+function parseRow(rowHtml) {
+    const cols = [
+        ...rowHtml.matchAll(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi),
+    ].map((m) => cleanCell(m[1]));
+
+    // Expect [Slot, Item, Location]
+    const [slot, item, location] = pad(cols, 3);
+    const normSlot = normalizeSlotName(slot);
+
+    if (/^slot$/i.test(normSlot)) return null; // header row
+    return {
+        slot: normSlot,
+        itemName: item || "Unknown",
+        location: location || "",
+    };
+}
+
+function cleanCell(html) {
+    return decodeEntities(stripTags(html))
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function stripTags(s) {
+    return s
+        .replace(/<br\s*\/?>/gi, " ")
+        .replace(/<[^>]+>/g, "");
+}
+
+function decodeEntities(s) {
+    return s
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">");
+}
+
+function pad(arr, n) {
+    const copy = [...arr];
+    while (copy.length < n) copy.push("");
+    return copy;
 }
