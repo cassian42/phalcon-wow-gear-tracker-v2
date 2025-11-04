@@ -1,72 +1,120 @@
-// ──────────────────────────────────────────────────────────────
-// blizzardService.js
-// ──────────────────────────────────────────────────────────────
-// Provides interaction with the Blizzard API for character data.
-// Includes secure caching, token management, and anonymous telemetry.
-// ──────────────────────────────────────────────────────────────
+/**
+ * Blizzard Service
+ * ------------------------------------------------------------
+ * Responsibilities (SRP):
+ *  - OAuth2 Client Credentials token management (with cache)
+ *  - Fetching character profile & equipment from Blizzard API
+ *  - Zero knowledge of mapping/formatting (that’s the mapper’s job)
+ *
+ * Open for extension (OCP): if later you add media, mythic+, etc.,
+ * add small, focused functions here that reuse the auth & http plumbing.
+ */
 
-import axios from 'axios';
-import NodeCache from 'node-cache';
-import dotenv from 'dotenv';
-import { logQuery } from './logService.js';
+import axios from "axios";
+import cache from "../utils/cache.js";
 
-dotenv.config();
-
-const cache = new NodeCache({ stdTTL: 900 }); // 15 min cache
-const BASE_URL = 'https://us.api.blizzard.com/profile/wow/character';
+const TOKEN_CACHE_KEY = "blizz:token";
+const TOKEN_TTL_SEC = 3300; // ~55 minutes (shorter than 3600 to refresh safely)
 
 /**
- * Retrieves and caches the Blizzard API access token.
- * @returns {Promise<string>} OAuth access token
+ * Small, testable provider for environment/config.
+ * If later you move to a config module or secret manager,
+ * you only change this one place.
  */
+function getBlizzardConfig() {
+    const clientId = process.env.BLIZZARD_CLIENT_ID;
+    const clientSecret = process.env.BLIZZARD_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+        throw new Error("[BlizzardService] Missing BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET");
+    }
+    return { clientId, clientSecret };
+}
+
 async function getAccessToken() {
-    const cached = cache.get('blizzard_token');
+    const cached = cache.get(TOKEN_CACHE_KEY);
     if (cached) return cached;
 
-    const response = await axios.post(
-        'https://oauth.battle.net/token',
-        new URLSearchParams({ grant_type: 'client_credentials' }),
-        {
-            auth: {
-                username: process.env.BLIZZARD_CLIENT_ID,
-                password: process.env.BLIZZARD_CLIENT_SECRET,
-            },
-        }
-    );
+    const { clientId, clientSecret } = getBlizzardConfig();
 
-    const token = response.data.access_token;
-    cache.set('blizzard_token', token, 3400);
-    return token;
+    const body = new URLSearchParams();
+    body.set("grant_type", "client_credentials");
+
+    const { data } = await axios.post("https://oauth.battle.net/token", body, {
+        auth: { username: clientId, password: clientSecret },
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        timeout: 10_000,
+    });
+
+    if (!data?.access_token) {
+        throw new Error("[BlizzardService] OAuth response missing access_token");
+    }
+
+    cache.set(TOKEN_CACHE_KEY, data.access_token, TOKEN_TTL_SEC);
+    return data.access_token;
 }
 
 /**
- * Fetches the character profile from the Blizzard API.
- * @param {string} region - Blizzard API region
- * @param {string} realm - Character realm
- * @param {string} character - Character name
- * @returns {Promise<Object>} Blizzard API response (character profile)
+ * Shared axios GET with auth + standard query params.
+ * Namespace format per Blizzard docs: "profile-{region}"
  */
-export async function getCharacterProfile(region, realm, character) {
-    const cacheKey = `${region}-${realm}-${character}`;
+async function blizzardGet(region, path, { locale = "en_US" } = {}) {
+    const token = await getAccessToken();
+    const baseURL = `https://${region}.api.blizzard.com`;
+    const params = {
+        namespace: `profile-${region}`,
+        locale,
+    };
+
+    const { data } = await axios.get(`${baseURL}${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params,
+        timeout: 12_000,
+    });
+
+    return data;
+}
+
+/**
+ * Public API — fetchers (ISP-friendly signatures)
+ * Accepts raw values; slugging is handled internally.
+ */
+
+export async function getCharacterProfile({ region, realm, name, locale = "en_US" }) {
+    const realmSlug = slug(realm);
+    const nameSlug = slug(name);
+    return blizzardGet(region, `/profile/wow/character/${realmSlug}/${nameSlug}`, { locale });
+}
+
+export async function getCharacterEquipment({ region, realm, name, locale = "en_US" }) {
+    const realmSlug = slug(realm);
+    const nameSlug = slug(name);
+    return blizzardGet(
+        region,
+        `/profile/wow/character/${realmSlug}/${nameSlug}/equipment`,
+        { locale }
+    );
+}
+
+/**
+ * Convenience facade combining profile + equipment with short TTL.
+ * Controller may call fetchCharacterAggregated or call each fetcher separately.
+ */
+export async function fetchCharacterAggregated({ region, realm, name, locale = "en_US" }) {
+    const cacheKey = `char:${region}:${slug(realm)}:${slug(name)}:${locale}`;
     const cached = cache.get(cacheKey);
     if (cached) return cached;
 
-    const start = Date.now();
-    try {
-        const token = await getAccessToken();
-        const url = `${BASE_URL}/${realm}/${character}?namespace=profile-${region}&locale=en_US&access_token=${token}`;
-        const { data } = await axios.get(url);
+    const [profile, equipment] = await Promise.all([
+        getCharacterProfile({ region, realm, name, locale }),
+        getCharacterEquipment({ region, realm, name, locale }),
+    ]);
 
-        // Cache the response
-        cache.set(cacheKey, data, 900);
+    const payload = { profile, equipment };
+    cache.set(cacheKey, payload, 60); // 1 minute: avoids hammering when users refresh
+    return payload;
+}
 
-        // Log anonymous telemetry
-        await logQuery('fetch_character', region, realm, Date.now() - start);
-
-        return data;
-    } catch (error) {
-        await logQuery('fetch_character_error', region, realm, Date.now() - start);
-        console.error(`❌ [BlizzardService] Failed to fetch profile: ${error.message}`);
-        throw error;
-    }
+/** utils */
+function slug(s) {
+    return String(s).trim().toLowerCase().replace(/\s+/g, "-");
 }

@@ -1,7 +1,16 @@
-import { Router } from "express";
-import { syncCharacter } from "../controllers/characterController.js";
+/**
+ * Main API Routes
+ * ------------------------------------------------------------
+ * Central entry point for all route modules.
+ * ------------------------------------------------------------
+ */
 
-const router = Router();
-router.post("/character/sync", syncCharacter);
+import express from "express";
+import characterRoutes from "./characterRoutes.js";
+
+const router = express.Router();
+
+// Mount route groups
+router.use("/character", characterRoutes);
 
 export default router;
