@@ -136,15 +136,27 @@ function stripTags(s) {
         .replace(/<[^>]+>/g, "");
 }
 
+/**
+ * Decodes both named and numeric HTML entities (decimal & hex)
+ * e.g. &amp; → &, &#39; → ', &#x27; → '
+ */
 function decodeEntities(s) {
-    return s
+    if (!s) return "";
+    return String(s)
+        // Named entities
         .replace(/&nbsp;/g, " ")
         .replace(/&amp;/g, "&")
         .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
         .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">");
+        .replace(/&gt;/g, ">")
+        // Numeric (decimal)
+        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+        // Numeric (hex)
+        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
+            String.fromCharCode(parseInt(hex, 16))
+        );
 }
+
 
 function pad(arr, n) {
     const copy = [...arr];

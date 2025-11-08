@@ -1,70 +1,165 @@
 /**
- * Comparison Service
+ * Comparison Service (Pair-aware)
  * ------------------------------------------------------------
- * Compares a character's current gear (from Blizzard API)
- * against a reference BiS dataset from any source.
- * ------------------------------------------------------------
+ * Pairs character gear with BiS gear intelligently:
+ * - Matches by item name first (across flexible slots)
+ * - Falls back to slot-based comparison
  */
 
-import { getCharacterData } from "./blizzardService.js";
-import { getMaxrollBisData } from "./maxrollService.js";
+import { fetchCharacterAggregated } from "./blizzardService.js";
+import { getMaxrollGear } from "./maxrollService.js";
 
 /**
- * Compares two gear datasets slot-by-slot
+ * Normalize string for consistent comparison
  */
-function compareGearSets(current, bis) {
+function normalize(s) {
+    return String(s || "").trim().toLowerCase();
+}
+
+/**
+ * Returns the group name a slot belongs to, or null
+ */
+function getSlotGroup(slot) {
+    if (!slot) return null;
+    const s = slot.toLowerCase();
+    if (s.startsWith("ring")) return "rings";
+    if (s.startsWith("trinket")) return "trinkets";
+    if (s.includes("hand")) return "weapons";
+    return null;
+}
+
+/**
+ * Core pairing algorithm
+ * ------------------------------------------------------------
+ * 1. Try to match by exact item name (case-insensitive)
+ * 2. Remaining unmatched items → slot-by-slot comparison
+ * 3. Keeps one-to-one pairing (no duplicates)
+ */
+function compareGearSets(currentGear = [], bisGear = []) {
     const results = [];
+    const usedCurrent = new Set();
 
-    for (const slot in current) {
-        const currentItem = current[slot];
-        const bisItem = bis.find(i => i.slot === slot);
+    for (const bis of bisGear) {
+        const group = getSlotGroup(bis.slot);
+        let current = null;
 
-        if (!bisItem) continue;
+        // 1️⃣ Exact name match (ignores slot)
+        current = currentGear.find(
+            (c, idx) =>
+                !usedCurrent.has(idx) &&
+                normalize(c.itemName) === normalize(bis.itemName)
+        );
 
-        const match = currentItem.itemId === bisItem.itemId;
-        const diff = (currentItem.iLvl || 0) - (bisItem.iLvl || 0);
+        // 2️⃣ Same slot / group if not found
+        if (!current) {
+            current = currentGear.find(
+                (c, idx) =>
+                    !usedCurrent.has(idx) &&
+                    (c.slot === bis.slot ||
+                        (group && getSlotGroup(c.slot) === group))
+            );
+        }
+
+        if (current) {
+            usedCurrent.add(currentGear.indexOf(current));
+        }
+
+        const match = current
+            ? normalize(current.itemName) === normalize(bis.itemName)
+            : false;
+        const diff = current
+            ? (current.iLvl || 0) - (bis.iLvl || 0)
+            : 0;
 
         results.push({
-            slot,
-            currentItem: currentItem.itemName,
-            bisItem: bisItem.itemName,
+            slot: bis.slot,
+            currentItem: current?.itemName || null,
+            bisItem: bis.itemName,
             match,
             diff,
-            notes: match ? "✔ Perfect match" : diff > 0 ? "↑ Higher iLvl" : "↓ Needs upgrade"
+            notes: current
+                ? match
+                    ? "✔ Perfect match"
+                    : diff > 0
+                        ? "↑ Higher iLvl"
+                        : "↓ Needs upgrade"
+                : "✖ Not equipped",
         });
     }
+
+    // 3️⃣ Add extra equipped items not in BiS
+    currentGear.forEach((c, idx) => {
+        if (!usedCurrent.has(idx)) {
+            results.push({
+                slot: c.slot,
+                currentItem: c.itemName,
+                bisItem: null,
+                match: false,
+                diff: 0,
+                notes: "✖ Not found in BiS list",
+            });
+        }
+    });
 
     return results;
 }
 
 /**
- * Entry point: performs full comparison workflow
- * @param {string} region - e.g., "us"
- * @param {string} realm - e.g., "quelthalas"
- * @param {string} name - e.g., "phalcon"
- * @param {string} spec - specialization (optional)
- * @param {string} source - source of BiS ("maxroll", "local", etc.)
+ * Full comparison workflow — no query params required.
  */
-export async function compareCharacterGear(region, realm, name, spec = "default", source = "maxroll") {
-    const character = await getCharacterData(region, realm, name);
+export async function compareCharacterGear(region, realm, name) {
+    try {
+        // 1️⃣ Blizzard data
+        const { profile, equipment } = await fetchCharacterAggregated({
+            region,
+            realm,
+            name,
+        });
 
-    let bisData;
-    if (source === "maxroll") {
-        bisData = await getMaxrollBisData(character.class, spec);
-    } else {
-        throw new Error(`Unsupported BiS source: ${source}`);
+        const spec = profile?.active_spec?.name ?? "Unknown";
+        const klass = profile?.character_class?.name ?? "Unknown";
+
+        const characterGear = Array.isArray(equipment?.equipped_items)
+            ? equipment.equipped_items.map((it) => ({
+                slot: it?.slot?.name ?? "Unknown",
+                itemName: it?.name ?? "Unknown",
+                iLvl: it?.level?.value ?? 0,
+            }))
+            : [];
+
+        // 2️⃣ Maxroll data (context auto-set to "raid")
+        const maxroll = await getMaxrollGear({
+            className: klass,
+            specName: spec,
+            context: "raid",
+        });
+        const bisGear = maxroll?.rows ?? [];
+
+        // 3️⃣ Pair and compare
+        const comparison = compareGearSets(characterGear, bisGear);
+
+        const total = comparison.length;
+        const perfect = comparison.filter((r) => r.match).length;
+        const missing = comparison.filter((r) => !r.currentItem).length;
+
+        return {
+            metadata: {
+                character: profile?.name ?? name,
+                class: klass,
+                spec,
+                source: "maxroll",
+                timestamp: new Date().toISOString(),
+                summary: {
+                    total,
+                    perfect,
+                    missing,
+                    completion: `${((perfect / total) * 100).toFixed(1)}%`,
+                },
+            },
+            comparison,
+        };
+    } catch (err) {
+        console.error("[ComparisonService]", err);
+        throw err;
     }
-
-    const comparison = compareGearSets(character.gear, bisData);
-
-    return {
-        metadata: {
-            character: character.name,
-            class: character.class,
-            spec,
-            source,
-            timestamp: new Date().toISOString()
-        },
-        comparison
-    };
 }
