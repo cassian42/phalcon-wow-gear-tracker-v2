@@ -12,7 +12,7 @@ app.use(helmet());
 app.get("/", (_, res) => res.json({ status: "ok", message: "Phalcon Gear Tracker v2 API" }));
 app.use("/api", routes);
 
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 4000;
 app.listen(port, () => {
     console.log(`🚀 Server running on port ${port}`);
 });

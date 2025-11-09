@@ -1,24 +1,30 @@
 # ──────────────────────────────────────────────────────────────
-# Dockerfile — Phalcon Gear Tracker v2
+# Dockerfile — Phalcon Gear Tracker v2 (Backend)
 # ──────────────────────────────────────────────────────────────
+
+# Etapa base
 FROM node:20-alpine AS base
 
 WORKDIR /app
 
-# Copy package files first
+# Copiar archivos de dependencias
 COPY package*.json ./
 
-# Install all dependencies (including dev for nodemon)
-RUN npm install
+# Instalar dependencias (usa npm ci si tienes package-lock.json)
+RUN npm ci
 
-# Copy the rest of the project
+# Copiar el resto del proyecto
 COPY . .
 
-# Generate Prisma client
+# Generar el cliente de Prisma
 RUN npx prisma generate
 
-# Expose the app port
-EXPOSE 3000
+# Variables de entorno por defecto
+ENV NODE_ENV=development
+ENV PORT=4000
 
-# Start the development process
+# Exponer el puerto de la aplicación
+EXPOSE 4000
+
+# Comando por defecto
 CMD ["npm", "run", "dev"]
