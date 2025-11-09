@@ -28,3 +28,6 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 package-lock.json
+
+#Libs
+frontend/.next

@@ -43,5 +43,22 @@ services:
       timeout: 5s
       retries: 5
 
+  frontend:
+    container_name: phalcon_frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:4000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev
+    depends_on:
+      - api
+
+
 volumes:
   pgdata:
