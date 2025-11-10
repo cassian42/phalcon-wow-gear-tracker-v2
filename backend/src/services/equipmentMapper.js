@@ -78,6 +78,7 @@ export function mapEquipment(equipment) {
 export function mapCharacterData(profile, equipment) {
     return {
         name: safeName(profile?.name),
+        level: profile?.level ?? null,
         class: safeName(profile?.character_class?.name),
         spec: safeName(profile?.active_spec?.name),
         race: safeName(profile?.race?.name),

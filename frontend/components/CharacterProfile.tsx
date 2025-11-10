@@ -53,7 +53,7 @@ export function CharacterProfile({
                 <div className="flex flex-col space-y-1 text-center sm:text-left">
                     <h2 className="text-xl font-semibold">{data.name}</h2>
                     <p className="text-muted-foreground text-sm">
-                        Level {data.level} {data.class} • {data.spec} —{" "}
+                        Level {data.level} {data.class} • {data.spec} —{" "} {data.faction}
                         <span className="italic">{data.realm}</span>
                     </p>
                     <p className="text-xs text-muted-foreground">
