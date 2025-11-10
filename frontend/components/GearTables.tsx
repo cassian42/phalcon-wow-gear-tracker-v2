@@ -4,10 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Loader2 } from "lucide-react"
 
 /**
- * ⚔️ Gear Tables
+ * ⚔️ Gear Tables (v2.3)
  *
- * Includes "Location" column showing BiS item source.
- * Highlights perfect matches in green, mismatches in red tint.
+ * Now displays BiS item location (source) directly from API.
+ * The new API returns `location` within each comparison item.
  */
 
 export function GearTables({
@@ -36,20 +36,27 @@ export function GearTables({
     return (
         <Card className="border-border/60 bg-card/60 backdrop-blur-md shadow-md">
             <CardHeader>
-                <CardTitle>Gear Comparison ({comparison.context})</CardTitle>
+                <CardTitle>
+                    Gear Comparison ({comparison.context})
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                    Showing current equipment vs. BiS from Maxroll.gg
+                </p>
             </CardHeader>
+
             <CardContent>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm border-collapse">
                         <thead>
-                        <tr className="text-muted-foreground border-b border-border">
-                            <th className="p-2 text-left">Slot</th>
-                            <th className="p-2 text-left">Current</th>
-                            <th className="p-2 text-left">BiS</th>
-                            <th className="p-2 text-left">Location</th>
-                            <th className="p-2 text-left">Notes</th>
+                        <tr className="text-muted-foreground border-b border-border text-left">
+                            <th className="p-2">Slot</th>
+                            <th className="p-2">Current</th>
+                            <th className="p-2">BiS</th>
+                            <th className="p-2">Location</th>
+                            <th className="p-2">Notes</th>
                         </tr>
                         </thead>
+
                         <tbody>
                         {comparison.comparison.map((item: any, idx: number) => (
                             <tr
@@ -62,10 +69,18 @@ export function GearTables({
                             >
                                 <td className="p-2 font-medium">{item.slot}</td>
                                 <td className="p-2">{item.currentItem || "—"}</td>
-                                <td className="p-2">{item.bisItem || "—"}</td>
-                                <td className="p-2 text-muted-foreground">
-                                    {item.bisLocation || "—"}
+                                <td className="p-2 font-semibold">{item.bisItem || "—"}</td>
+
+                                <td className="p-2">
+                                    {item.location ? (
+                                        <span className="px-2 py-0.5 rounded-full bg-muted text-xs text-muted-foreground">
+                        {item.location}
+                      </span>
+                                    ) : (
+                                        <span className="text-muted-foreground">—</span>
+                                    )}
                                 </td>
+
                                 <td className="p-2 text-muted-foreground">{item.notes}</td>
                             </tr>
                         ))}

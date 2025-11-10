@@ -1,8 +1,9 @@
 /**
- * Comparison Service (Pair-aware + Context Support)
+ * Comparison Service (Pair-aware + Context Support + Location Field)
  * ------------------------------------------------------------
  * Pairs character gear with BiS gear intelligently and compares it.
- * Now supports context selection (raid / mythic-plus).
+ * Now supports context selection (raid / mythic-plus) and includes
+ * BiS item 'location' field from Maxroll for UI display.
  */
 
 import { fetchCharacterAggregated } from "./blizzardService.js";
@@ -39,6 +40,7 @@ function getSlotGroup(slot) {
  * Performs one-to-one pairing between current gear and BiS gear.
  * 1. Tries to match by exact item name.
  * 2. Falls back to slot/group-based pairing.
+ * 3. Returns an array of comparison results including BiS location.
  */
 function compareGearSets(currentGear = [], bisGear = []) {
     const results = [];
@@ -85,10 +87,11 @@ function compareGearSets(currentGear = [], bisGear = []) {
                         ? "↑ Higher iLvl"
                         : "↓ Needs upgrade"
                 : "✖ Not equipped",
+            location: bis.location || null, // 🆕 include BiS item source location
         });
     }
 
-    // 3️⃣ Add extra equipped items not in BiS
+    // 3️⃣ Add extra equipped items not found in BiS
     currentGear.forEach((c, idx) => {
         if (!usedCurrent.has(idx)) {
             results.push({
@@ -98,6 +101,7 @@ function compareGearSets(currentGear = [], bisGear = []) {
                 match: false,
                 diff: 0,
                 notes: "✖ Not found in BiS list",
+                location: null, // 🆕 maintain schema consistency
             });
         }
     });
@@ -144,12 +148,20 @@ export async function compareCharacterGear(region, realm, name, context = "raid"
             specName: spec,
             context,
         });
+
+        /**
+         * Expected structure from MaxrollService:
+         * maxroll.rows = [
+         *   { slot: "Head", itemName: "Augur's Ephemeral Wide-Brim", location: "Tier / Catalyst" },
+         *   ...
+         * ]
+         */
         const bisGear = maxroll?.rows ?? [];
 
         // 3️⃣ Compare sets
         const comparison = compareGearSets(characterGear, bisGear);
 
-        // 4️⃣ Summary
+        // 4️⃣ Summary metadata
         const total = comparison.length;
         const perfect = comparison.filter((r) => r.match).length;
         const missing = comparison.filter((r) => !r.currentItem).length;
