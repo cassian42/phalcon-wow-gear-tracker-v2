@@ -1,23 +1,26 @@
 /**
- * Comparison Service (Pair-aware)
+ * Comparison Service (Pair-aware + Context Support)
  * ------------------------------------------------------------
- * Pairs character gear with BiS gear intelligently:
- * - Matches by item name first (across flexible slots)
- * - Falls back to slot-based comparison
+ * Pairs character gear with BiS gear intelligently and compares it.
+ * Now supports context selection (raid / mythic-plus).
  */
 
 import { fetchCharacterAggregated } from "./blizzardService.js";
 import { getMaxrollGear } from "./maxrollService.js";
 
+/* -------------------------------------------------------------------------- */
+/*                               Helper Functions                             */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Normalize string for consistent comparison
+ * Normalize string for consistent comparison.
  */
 function normalize(s) {
     return String(s || "").trim().toLowerCase();
 }
 
 /**
- * Returns the group name a slot belongs to, or null
+ * Returns the logical group a slot belongs to (rings, trinkets, weapons).
  */
 function getSlotGroup(slot) {
     if (!slot) return null;
@@ -28,12 +31,14 @@ function getSlotGroup(slot) {
     return null;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                           Core Comparison Logic                            */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Core pairing algorithm
- * ------------------------------------------------------------
- * 1. Try to match by exact item name (case-insensitive)
- * 2. Remaining unmatched items → slot-by-slot comparison
- * 3. Keeps one-to-one pairing (no duplicates)
+ * Performs one-to-one pairing between current gear and BiS gear.
+ * 1. Tries to match by exact item name.
+ * 2. Falls back to slot/group-based pairing.
  */
 function compareGearSets(currentGear = [], bisGear = []) {
     const results = [];
@@ -43,14 +48,14 @@ function compareGearSets(currentGear = [], bisGear = []) {
         const group = getSlotGroup(bis.slot);
         let current = null;
 
-        // 1️⃣ Exact name match (ignores slot)
+        // 1️⃣ Name-based pairing (case-insensitive)
         current = currentGear.find(
             (c, idx) =>
                 !usedCurrent.has(idx) &&
                 normalize(c.itemName) === normalize(bis.itemName)
         );
 
-        // 2️⃣ Same slot / group if not found
+        // 2️⃣ Fallback: same slot or same group
         if (!current) {
             current = currentGear.find(
                 (c, idx) =>
@@ -60,16 +65,12 @@ function compareGearSets(currentGear = [], bisGear = []) {
             );
         }
 
-        if (current) {
-            usedCurrent.add(currentGear.indexOf(current));
-        }
+        if (current) usedCurrent.add(currentGear.indexOf(current));
 
         const match = current
             ? normalize(current.itemName) === normalize(bis.itemName)
             : false;
-        const diff = current
-            ? (current.iLvl || 0) - (bis.iLvl || 0)
-            : 0;
+        const diff = current ? (current.iLvl || 0) - (bis.iLvl || 0) : 0;
 
         results.push({
             slot: bis.slot,
@@ -104,12 +105,22 @@ function compareGearSets(currentGear = [], bisGear = []) {
     return results;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                           Public Comparison API                            */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Full comparison workflow — no query params required.
+ * Full comparison workflow.
+ * Fetches Blizzard data and compares against Maxroll BiS by context.
+ *
+ * @param {string} region - e.g. "us"
+ * @param {string} realm - e.g. "quelthalas"
+ * @param {string} name  - character name
+ * @param {string} context - "raid" | "mythic-plus" (default: "raid")
  */
-export async function compareCharacterGear(region, realm, name) {
+export async function compareCharacterGear(region, realm, name, context = "raid") {
     try {
-        // 1️⃣ Blizzard data
+        // 1️⃣ Fetch data from Blizzard
         const { profile, equipment } = await fetchCharacterAggregated({
             region,
             realm,
@@ -127,17 +138,18 @@ export async function compareCharacterGear(region, realm, name) {
             }))
             : [];
 
-        // 2️⃣ Maxroll data (context auto-set to "raid")
+        // 2️⃣ Fetch BiS gear from Maxroll based on context
         const maxroll = await getMaxrollGear({
             className: klass,
             specName: spec,
-            context: "raid",
+            context,
         });
         const bisGear = maxroll?.rows ?? [];
 
-        // 3️⃣ Pair and compare
+        // 3️⃣ Compare sets
         const comparison = compareGearSets(characterGear, bisGear);
 
+        // 4️⃣ Summary
         const total = comparison.length;
         const perfect = comparison.filter((r) => r.match).length;
         const missing = comparison.filter((r) => !r.currentItem).length;
@@ -148,6 +160,7 @@ export async function compareCharacterGear(region, realm, name) {
                 class: klass,
                 spec,
                 source: "maxroll",
+                context,
                 timestamp: new Date().toISOString(),
                 summary: {
                     total,

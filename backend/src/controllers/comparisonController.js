@@ -1,26 +1,29 @@
 /**
- * Comparison Controller (simplified)
+ * Comparison Controller
  * ------------------------------------------------------------
- * No need for query params — class and spec come from Blizzard.
+ * Handles requests for gear comparison.
+ * Optional query param `?context=raid|mythic-plus`
  *
  * Example:
- *   GET /api/comparison/us/quelthalas/phalcon
+ *   GET /api/comparison/us/quelthalas/phalcon?context=mythic-plus
  */
 
 import { compareCharacterGear } from "../services/comparisonService.js";
 
 export async function getCharacterComparison(req, res) {
     const { region, realm, name } = req.params;
+    const { context = "raid" } = req.query; // ← context param added
 
     if (!region || !realm || !name) {
         return res.status(400).json({
             error: "Missing required parameters: region, realm, or name.",
-            example: "/api/comparison/us/quelthalas/phalcon",
+            example: "/api/comparison/us/quelthalas/phalcon?context=raid",
         });
     }
 
     try {
-        const result = await compareCharacterGear(region, realm, name);
+        const result = await compareCharacterGear(region, realm, name, context);
+
         return res.status(200).json({
             success: true,
             ...result.metadata,

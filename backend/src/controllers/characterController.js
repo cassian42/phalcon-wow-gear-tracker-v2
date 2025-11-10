@@ -3,9 +3,9 @@
  * ------------------------------------------------------------
  * Orchestrates the “character” use case:
  *  - Validates inputs
- *  - Gets profile+equipment (via BlizzardService)
- *  - Maps the payload (via EquipmentMapper)
- *  - Returns a stable, cache-friendly JSON
+ *  - Retrieves profile, equipment, and media
+ *  - Maps structured data for frontend
+ *  - Returns a stable JSON response
  */
 
 import { fetchCharacterAggregated } from "../services/blizzardService.js";
@@ -24,7 +24,7 @@ export async function getCharacter(req, res) {
     if (!name) return badRequest(res, "Missing name");
 
     try {
-        const { profile, equipment } = await fetchCharacterAggregated({
+        const { profile, equipment, media } = await fetchCharacterAggregated({
             region,
             realm,
             name,
@@ -32,6 +32,7 @@ export async function getCharacter(req, res) {
         });
 
         const mapped = mapCharacterData(profile, equipment);
+        mapped.media = media; // attach media
 
         return res.status(200).json({
             source: "Blizzard API / Cached",
@@ -39,7 +40,6 @@ export async function getCharacter(req, res) {
             data: mapped,
         });
     } catch (err) {
-        // Keep details for logs; send safe message to caller
         console.error(`[CharacterController] ${err.stack || err.message}`);
         return res.status(502).json({
             error: "Failed to fetch character data from Blizzard API",
