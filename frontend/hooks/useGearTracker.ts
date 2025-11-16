@@ -1,12 +1,15 @@
 "use client"
 
 import { useState } from "react"
+import { apiUrl } from "@/lib/api" // ✅ central API helper
 
 /**
  * ⚙️ Custom Hook: useGearTracker
  *
  * Centralizes API calls and state for the Phalcon Gear Tracker dashboard.
- * Follows the Single Responsibility Principle — this hook only manages data logic.
+ * - Follows SRP (Single Responsibility Principle)
+ * - Reads API base URL from environment (via apiUrl helper)
+ * - Keeps data fetching logic separate from UI rendering
  */
 
 export function useGearTracker() {
@@ -17,20 +20,21 @@ export function useGearTracker() {
     const [context, setContext] = useState<"raid" | "mythic-plus">("raid")
 
     /**
-     * Fetches full character data from backend.
+     * Fetches full character data from backend (Blizzard API via backend proxy).
      */
     const fetchCharacter = async (region: string, realm: string, name: string) => {
         try {
             setLoading(true)
             setStatus("Fetching character data...")
-            const res = await fetch(
-                `http://localhost:4000/api/character/${region}/${realm}/${name}`
-            )
+
+            const res = await fetch(apiUrl(`/api/character/${region}/${realm}/${name}`))
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
             const json = await res.json()
             setCharacter(json.data)
-            setStatus("Character loaded")
+            setStatus("Character loaded ✅")
         } catch (err) {
-            console.error(err)
+            console.error("[fetchCharacter] Error:", err)
             setStatus("❌ Error fetching character data")
         } finally {
             setLoading(false)
@@ -38,7 +42,7 @@ export function useGearTracker() {
     }
 
     /**
-     * Fetches comparison data (current vs BiS).
+     * Fetches comparison data (current gear vs BiS from Maxroll).
      */
     const fetchComparison = async (
         region: string,
@@ -49,14 +53,17 @@ export function useGearTracker() {
         try {
             setLoading(true)
             setStatus(`Comparing gear (${selectedContext})...`)
+
             const res = await fetch(
-                `http://localhost:4000/api/comparison/${region}/${realm}/${name}?context=${selectedContext}`
+                apiUrl(`/api/comparison/${region}/${realm}/${name}?context=${selectedContext}`)
             )
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
             const json = await res.json()
             setComparison(json)
             setStatus("✅ Comparison complete")
         } catch (err) {
-            console.error(err)
+            console.error("[fetchComparison] Error:", err)
             setStatus("❌ Error fetching comparison")
         } finally {
             setLoading(false)

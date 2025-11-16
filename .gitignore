@@ -31,3 +31,5 @@ package-lock.json
 
 #Libs
 frontend/.next
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo
